@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Network, RefreshCw } from 'lucide-react';
+import { Network, RefreshCw, Flame } from 'lucide-react';
 import type { TelemetryPoint, AIInsight } from '../types/telemetry';
 
 interface MicroserviceNode {
@@ -18,11 +18,13 @@ interface MicroserviceNode {
 interface MicroserviceTopology3DProps {
   latestPoint: TelemetryPoint | null;
   insights: AIInsight[];
+  onTriggerBurst?: () => void;
 }
 
 export const MicroserviceTopology3D: React.FC<MicroserviceTopology3DProps> = ({
   latestPoint,
-  insights
+  insights,
+  onTriggerBurst
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -142,7 +144,7 @@ export const MicroserviceTopology3D: React.FC<MicroserviceTopology3DProps> = ({
             const py = proj.y + (target.proj.y - proj.y) * pulseT;
             ctx.beginPath();
             ctx.arc(px, py, 3, 0, Math.PI * 2);
-            ctx.fillStyle = '#38bdf8';
+            ctx.fillStyle = node.status === 'critical' ? '#f43f5e' : '#38bdf8';
             ctx.fill();
           }
         });
@@ -156,13 +158,21 @@ export const MicroserviceTopology3D: React.FC<MicroserviceTopology3DProps> = ({
 
         const color = isCrit ? '#f43f5e' : isWarn ? '#fbbf24' : '#34d399';
 
-        // Outer Glow Aura
+        // Outer Glow Aura & Shockwave Ring on Critical Anomaly
         ctx.shadowColor = color;
-        ctx.shadowBlur = isCrit ? 20 : 10;
+        ctx.shadowBlur = isCrit ? 25 : 10;
+
+        if (isCrit) {
+          ctx.beginPath();
+          ctx.arc(proj.x, proj.y, radius + Math.sin(performance.now() * 0.01) * 8, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(244, 63, 94, 0.6)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
 
         ctx.beginPath();
         ctx.arc(proj.x, proj.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = isCrit ? 'rgba(244, 63, 94, 0.3)' : 'rgba(15, 23, 42, 0.9)';
+        ctx.fillStyle = isCrit ? 'rgba(244, 63, 94, 0.35)' : 'rgba(15, 23, 42, 0.9)';
         ctx.fill();
         ctx.strokeStyle = color;
         ctx.lineWidth = 2.5;
@@ -177,7 +187,7 @@ export const MicroserviceTopology3D: React.FC<MicroserviceTopology3DProps> = ({
         ctx.fillText(node.name, proj.x, proj.y + radius + 14);
 
         // Latency Badge
-        ctx.fillStyle = 'var(--text-dim)';
+        ctx.fillStyle = isCrit ? '#f43f5e' : 'var(--text-dim)';
         ctx.font = '10px JetBrains Mono, monospace';
         ctx.fillText(`${node.latency}ms | ${node.load}%`, proj.x, proj.y + radius + 26);
       });
@@ -193,11 +203,10 @@ export const MicroserviceTopology3D: React.FC<MicroserviceTopology3DProps> = ({
   }, [rotationAngle]);
 
   function project3D(x: number, y: number, z: number, angle: number, fov: number, cx: number, cy: number) {
-    // 3D Y-axis Rotation Matrix
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     const rx = x * cos - z * sin;
-    const rz = x * sin + z * cos + 4.5; // Z depth offset
+    const rz = x * sin + z * cos + 4.5;
 
     const scale = fov / rz;
     const px = cx + rx * scale * 45;
@@ -223,6 +232,27 @@ export const MicroserviceTopology3D: React.FC<MicroserviceTopology3DProps> = ({
 
         {/* Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {onTriggerBurst && (
+            <button
+              onClick={onTriggerBurst}
+              style={{
+                padding: '4px 10px',
+                borderRadius: '4px',
+                background: 'rgba(244, 63, 94, 0.15)',
+                border: '1px solid rgba(244, 63, 94, 0.4)',
+                color: '#f87171',
+                fontSize: '0.75rem',
+                fontWeight: '600',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}
+            >
+              <Flame size={12} /> Inject 3D Anomaly Burst
+            </button>
+          )}
+
           <button
             onClick={() => setRotationAngle(r => r + 0.5)}
             style={{

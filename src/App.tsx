@@ -299,6 +299,7 @@ export function App() {
             <MicroserviceTopology3D
               latestPoint={latestPoint}
               insights={insights}
+              onTriggerBurst={handleTriggerBurst}
             />
           )}
         </div>
