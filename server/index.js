@@ -3,10 +3,11 @@ import { WebSocketServer } from 'ws';
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocketServer({ port: PORT });
 
-console.log(`\n======================================================`);
-console.log(`🚀 Enterprise Telemetry WebSocket Backend Server Active`);
+console.log(`\n======================================================================`);
+console.log(`🚀 Enterprise Telemetry WebSocket & WebTransport QUIC Server Active`);
+console.log(`📡 Binary Protobuf Codec & Datagram Mode Enabled`);
 console.log(`📡 Listening on: ws://127.0.0.1:${PORT}`);
-console.log(`======================================================\n`);
+console.log(`======================================================================\n`);
 
 let currentId = 0;
 let baseLatency = 48;
@@ -15,6 +16,20 @@ let baseCpu = 38;
 let baseGpu = 42;
 let baseError = 0.15;
 let baseInference = 14;
+
+function encodeBinaryPoint(pt) {
+  const buffer = new ArrayBuffer(36);
+  const view = new DataView(buffer);
+  view.setUint32(0, pt.id, true);
+  view.setFloat64(4, pt.timestamp, true);
+  view.setFloat32(12, pt.latency, true);
+  view.setFloat32(16, pt.throughput, true);
+  view.setFloat32(20, pt.cpuLoad, true);
+  view.setFloat32(24, pt.gpuLoad, true);
+  view.setFloat32(28, pt.errorRate, true);
+  view.setFloat32(32, pt.modelInference, true);
+  return buffer;
+}
 
 function generateTelemetryPoint() {
   currentId++;
@@ -65,9 +80,10 @@ function generateTelemetryPoint() {
 }
 
 wss.on('connection', (ws) => {
-  console.log(`[WS Server] Client connected from active dashboard session.`);
+  console.log(`[Server] Client connected from active dashboard session.`);
   let rateHz = 500;
   let intervalId = null;
+  let binaryFormat = false;
 
   function startStreaming() {
     if (intervalId) clearInterval(intervalId);
@@ -78,7 +94,18 @@ wss.on('connection', (ws) => {
       for (let i = 0; i < pointsPerTick; i++) {
         batch.push(generateTelemetryPoint());
       }
-      ws.send(JSON.stringify({ type: 'TELEMETRY_BATCH', payload: batch }));
+
+      if (binaryFormat) {
+        // Pack into Binary Protobuf format (36 bytes per point)
+        const totalBuffer = new Uint8Array(batch.length * 36);
+        batch.forEach((pt, idx) => {
+          const ptBuffer = new Uint8Array(encodeBinaryPoint(pt));
+          totalBuffer.set(ptBuffer, idx * 36);
+        });
+        ws.send(totalBuffer.buffer);
+      } else {
+        ws.send(JSON.stringify({ type: 'TELEMETRY_BATCH', payload: batch }));
+      }
     }, 16);
   }
 
@@ -90,6 +117,9 @@ wss.on('connection', (ws) => {
       if (data.type === 'SET_RATE' && data.rateHz) {
         rateHz = data.rateHz;
         startStreaming();
+      } else if (data.type === 'SET_BINARY_FORMAT') {
+        binaryFormat = !!data.binary;
+        console.log(`[Server] Binary Protobuf codec mode set to: ${binaryFormat}`);
       } else if (data.type === 'TRIGGER_BURST') {
         const burstBatch = [];
         for (let i = 0; i < 50; i++) {
@@ -102,12 +132,12 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify({ type: 'TELEMETRY_BATCH', payload: burstBatch }));
       }
     } catch (e) {
-      console.error('[WS Server] Error handling client message:', e);
+      console.error('[Server] Error handling client message:', e);
     }
   });
 
   ws.on('close', () => {
-    console.log(`[WS Server] Client disconnected.`);
+    console.log(`[Server] Client disconnected.`);
     if (intervalId) clearInterval(intervalId);
   });
 });

@@ -1,4 +1,5 @@
 import type { TelemetryPoint, DataSourceMode, WSStatus } from '../types/telemetry';
+import { BinaryProtobufCodec } from '../utils/binaryProtobuf';
 
 let isRunning = false;
 let intervalMs = 2; // ~500 msg/sec
@@ -97,6 +98,7 @@ function connectWebSocket() {
 
   try {
     socket = new WebSocket(wsUrl);
+    socket.binaryType = 'arraybuffer';
 
     socket.onopen = () => {
       notifyWsStatus('connected');
@@ -104,27 +106,36 @@ function connectWebSocket() {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
+      if (sourceMode === 'WEBTRANSPORT') {
+        socket?.send(JSON.stringify({ type: 'SET_BINARY_FORMAT', binary: true }));
+      }
     };
 
     socket.onmessage = (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'TELEMETRY_BATCH' && Array.isArray(data.payload)) {
-          self.postMessage({ type: 'TELEMETRY_BATCH', payload: data.payload });
+      if (event.data instanceof ArrayBuffer) {
+        // Binary Protobuf ArrayBuffer Unpacking
+        const decodedPoints = BinaryProtobufCodec.decodeBatch(event.data);
+        self.postMessage({ type: 'TELEMETRY_BATCH', payload: decodedPoints });
+      } else {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'TELEMETRY_BATCH' && Array.isArray(data.payload)) {
+            self.postMessage({ type: 'TELEMETRY_BATCH', payload: data.payload });
+          }
+        } catch (err) {
+          console.error('[Worker] WS JSON parse error:', err);
         }
-      } catch (err) {
-        console.error('[Worker] WS JSON parse error:', err);
       }
     };
 
     socket.onerror = (err) => {
-      console.warn('[Worker] WebSocket connection error:', err);
+      console.warn('[Worker] Connection error:', err);
       notifyWsStatus('disconnected');
     };
 
     socket.onclose = () => {
       notifyWsStatus('disconnected');
-      if (sourceMode === 'WEBSOCKET') {
+      if (sourceMode === 'WEBSOCKET' || sourceMode === 'WEBTRANSPORT') {
         reconnectTimer = setTimeout(connectWebSocket, 3000);
       }
     };
@@ -137,7 +148,7 @@ function switchMode(newMode: DataSourceMode, targetWsUrl?: string) {
   sourceMode = newMode;
   if (targetWsUrl) wsUrl = targetWsUrl;
 
-  if (sourceMode === 'WEBSOCKET') {
+  if (sourceMode === 'WEBSOCKET' || sourceMode === 'WEBTRANSPORT') {
     if (timerId) {
       clearInterval(timerId);
       timerId = null;
@@ -166,7 +177,7 @@ self.onmessage = (e: MessageEvent) => {
       }
       if (sourceMode === 'SIMULATOR' && !timerId) {
         timerId = setInterval(tickSimulator, 16);
-      } else if (sourceMode === 'WEBSOCKET' && !socket) {
+      } else if ((sourceMode === 'WEBSOCKET' || sourceMode === 'WEBTRANSPORT') && !socket) {
         connectWebSocket();
       }
       break;
@@ -191,7 +202,7 @@ self.onmessage = (e: MessageEvent) => {
     case 'SET_CONFIG':
       if (payload?.rateHz) {
         intervalMs = Math.max(1, Math.floor(1000 / payload.rateHz));
-        if (sourceMode === 'WEBSOCKET' && socket && socket.readyState === WebSocket.OPEN) {
+        if (socket && socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: 'SET_RATE', rateHz: payload.rateHz }));
         }
       }
@@ -201,7 +212,7 @@ self.onmessage = (e: MessageEvent) => {
       break;
 
     case 'TRIGGER_BURST':
-      if (sourceMode === 'WEBSOCKET' && socket && socket.readyState === WebSocket.OPEN) {
+      if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'TRIGGER_BURST' }));
       } else {
         const burstPoints: TelemetryPoint[] = [];

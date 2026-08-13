@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Pause, Flame, RefreshCw, Sliders, Zap, Server, Cpu, FileText } from 'lucide-react';
+import { Play, Pause, Flame, RefreshCw, Sliders, Zap, Server, Cpu, FileText, Globe } from 'lucide-react';
 import type { MetricType, SystemStats, DataSourceMode } from '../types/telemetry';
 
 interface ControlToolbarProps {
@@ -71,12 +71,12 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
         {/* Data Source Selector & Stream Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
           
-          {/* Data Source Mode Toggle */}
+          {/* Data Source Mode Toggle (Simulated vs Real WebSocket vs WebTransport QUIC) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(15, 23, 42, 0.6)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
             <button
               onClick={() => onToggleSourceMode('SIMULATOR')}
               style={{
-                padding: '4px 10px',
+                padding: '4px 8px',
                 borderRadius: '6px',
                 fontSize: '0.75rem',
                 fontWeight: '600',
@@ -86,15 +86,16 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
                 color: stats.sourceMode === 'SIMULATOR' ? '#38bdf8' : 'var(--text-muted)',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px'
+                gap: '4px'
               }}
             >
               <Cpu size={13} /> Simulated
             </button>
+
             <button
               onClick={() => onToggleSourceMode('WEBSOCKET')}
               style={{
-                padding: '4px 10px',
+                padding: '4px 8px',
                 borderRadius: '6px',
                 fontSize: '0.75rem',
                 fontWeight: '600',
@@ -104,10 +105,29 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
                 color: stats.sourceMode === 'WEBSOCKET' ? '#34d399' : 'var(--text-muted)',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px'
+                gap: '4px'
               }}
             >
               <Server size={13} /> Real WebSocket
+            </button>
+
+            <button
+              onClick={() => onToggleSourceMode('WEBTRANSPORT')}
+              style={{
+                padding: '4px 8px',
+                borderRadius: '6px',
+                fontSize: '0.75rem',
+                fontWeight: '600',
+                cursor: 'pointer',
+                border: 'none',
+                background: stats.sourceMode === 'WEBTRANSPORT' ? 'rgba(192, 132, 252, 0.25)' : 'transparent',
+                color: stats.sourceMode === 'WEBTRANSPORT' ? '#c084fc' : 'var(--text-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}
+            >
+              <Globe size={13} /> WebTransport QUIC
             </button>
           </div>
 

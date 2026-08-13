@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Zap, AlertTriangle, Database, Radio, Wifi, WifiOff } from 'lucide-react';
+import { Activity, Zap, AlertTriangle, Database, Radio, Wifi, WifiOff, Globe } from 'lucide-react';
 import type { SystemStats } from '../types/telemetry';
 
 interface HeaderProps {
@@ -8,6 +8,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ stats }) => {
   const isWs = stats.sourceMode === 'WEBSOCKET';
+  const isQuic = stats.sourceMode === 'WEBTRANSPORT';
 
   return (
     <header className="glass-panel" style={{ padding: '14px 24px', marginBottom: '20px' }}>
@@ -19,11 +20,11 @@ export const Header: React.FC<HeaderProps> = ({ stats }) => {
             width: '42px',
             height: '42px',
             borderRadius: '10px',
-            background: isWs ? 'linear-gradient(135deg, #10b981 0%, #34d399 100%)' : 'linear-gradient(135deg, #0284c7 0%, #38bdf8 100%)',
+            background: isQuic ? 'linear-gradient(135deg, #c084fc 0%, #a855f7 100%)' : isWs ? 'linear-gradient(135deg, #10b981 0%, #34d399 100%)' : 'linear-gradient(135deg, #0284c7 0%, #38bdf8 100%)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: isWs ? '0 0 16px rgba(52, 211, 153, 0.4)' : '0 0 16px rgba(56, 189, 248, 0.4)'
+            boxShadow: isQuic ? '0 0 16px rgba(168, 85, 247, 0.4)' : isWs ? '0 0 16px rgba(52, 211, 153, 0.4)' : '0 0 16px rgba(56, 189, 248, 0.4)'
           }}>
             <Zap size={24} color="#ffffff" />
           </div>
@@ -34,7 +35,19 @@ export const Header: React.FC<HeaderProps> = ({ stats }) => {
               </h1>
               
               {/* Connection Status Badge */}
-              {isWs ? (
+              {isQuic ? (
+                stats.wsStatus === 'connected' ? (
+                  <span className="badge badge-low" style={{ background: 'rgba(192, 132, 252, 0.15)', color: '#c084fc', border: '1px solid rgba(192, 132, 252, 0.3)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Globe size={12} color="#c084fc" />
+                    WEBTRANSPORT QUIC BINARY CONNECTED
+                  </span>
+                ) : (
+                  <span className="badge badge-high" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <WifiOff size={12} color="#f87171" />
+                    WEBTRANSPORT SERVER OFFLINE
+                  </span>
+                )
+              ) : isWs ? (
                 stats.wsStatus === 'connected' ? (
                   <span className="badge badge-low" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <Wifi size={12} color="#34d399" />
@@ -48,7 +61,7 @@ export const Header: React.FC<HeaderProps> = ({ stats }) => {
                 ) : (
                   <span className="badge badge-high" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <WifiOff size={12} color="#f87171" />
-                    WS BACKEND OFFLINE (npm run server)
+                    WS BACKEND OFFLINE
                   </span>
                 )
               ) : (
@@ -60,7 +73,7 @@ export const Header: React.FC<HeaderProps> = ({ stats }) => {
 
             </div>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-              {isWs ? 'Connected to WebSocket Telemetry Server (ws://127.0.0.1:8080)' : 'Sub-second Hardware Accelerated Telemetry & Real-Time Anomaly Engine'}
+              {isQuic ? 'Connected to WebTransport over QUIC Binary Codec Server' : isWs ? 'Connected to WebSocket Telemetry Server (ws://127.0.0.1:8080)' : 'Sub-second Hardware Accelerated Telemetry & Real-Time Anomaly Engine'}
             </p>
           </div>
         </div>

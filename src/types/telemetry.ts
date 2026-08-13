@@ -13,7 +13,8 @@ export interface TelemetryPoint {
 }
 
 export type MetricType = 'latency' | 'throughput' | 'cpuLoad' | 'gpuLoad' | 'errorRate' | 'modelInference';
-export type DataSourceMode = 'SIMULATOR' | 'WEBSOCKET';
+export type DataSourceMode = 'SIMULATOR' | 'WEBSOCKET' | 'WEBTRANSPORT';
+export type RenderMode = 'WebGPU' | 'OffscreenCanvas' | 'Canvas2D';
 export type WSStatus = 'connected' | 'disconnected' | 'connecting' | 'simulator';
 
 export interface AnomalyEvent {
@@ -49,7 +50,7 @@ export interface SystemStats {
   totalPoints: number;
   anomaliesDetected: number;
   workerStatus: 'active' | 'paused' | 'error';
-  renderMode: 'OffscreenCanvas' | 'MainThread';
+  renderMode: RenderMode;
   zThreshold: number;
   sourceMode: DataSourceMode;
   wsStatus: WSStatus;

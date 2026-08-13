@@ -1,20 +1,26 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { RefreshCw, ZoomIn, ZoomOut, Zap } from 'lucide-react';
-import type { MetricType, TelemetryPoint } from '../types/telemetry';
+import { RefreshCw, ZoomIn, ZoomOut, Zap, Cpu } from 'lucide-react';
+import { WebGPURenderer } from '../utils/webgpuRenderer';
+import type { MetricType, TelemetryPoint, RenderMode } from '../types/telemetry';
 
 interface CanvasVisualizerProps {
   dataPoints: TelemetryPoint[];
   activeMetric: MetricType;
-  renderMode?: 'OffscreenCanvas' | 'MainThread';
+  renderMode?: RenderMode;
+  onRenderModeDetected?: (mode: RenderMode) => void;
 }
 
 export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
   dataPoints,
-  activeMetric
+  activeMetric,
+  onRenderModeDetected
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const animFrameIdRef = useRef<number | null>(null);
+  const webgpuRef = useRef<WebGPURenderer | null>(null);
+
+  const [activeRenderEngine, setActiveRenderEngine] = useState<RenderMode>('Canvas2D');
 
   // Latest props stored in refs to avoid canvas context re-initialization crashes
   const dataPointsRef = useRef<TelemetryPoint[]>(dataPoints);
@@ -31,18 +37,33 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
 
   const [fps, setFps] = useState(60);
 
-  // High Performance Canvas Rendering Loop
+  // Initialize WebGPU if available
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    const gpu = new WebGPURenderer();
+    gpu.init(canvasRef.current).then((success) => {
+      if (success) {
+        webgpuRef.current = gpu;
+        setActiveRenderEngine('WebGPU');
+        if (onRenderModeDetected) onRenderModeDetected('WebGPU');
+      } else {
+        setActiveRenderEngine('Canvas2D');
+        if (onRenderModeDetected) onRenderModeDetected('Canvas2D');
+      }
+    });
+  }, []);
+
+  // High Performance Canvas Rendering Loop (WebGPU / Canvas2D Fallback)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
 
     let frameCount = 0;
     let lastFpsCheck = performance.now();
 
     const render = () => {
-      if (!canvas || !ctx) return;
+      if (!canvas) return;
 
       // Handle Container Size
       if (containerRef.current) {
@@ -66,111 +87,115 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
         lastFpsCheck = now;
       }
 
-      // Clear Canvas Background
-      ctx.fillStyle = '#0b0f19';
-      ctx.fillRect(0, 0, width, height);
-
-      // Draw Grid Lines
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-      ctx.lineWidth = 1;
-      const rows = 6;
-      const cols = 10;
-      const rowStep = height / rows;
-      const colStep = width / cols;
-
-      ctx.beginPath();
-      for (let i = 1; i < rows; i++) {
-        const y = i * rowStep;
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-      }
-      for (let j = 1; j < cols; j++) {
-        const x = j * colStep;
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, height);
-      }
-      ctx.stroke();
-
       const currentPoints = dataPointsRef.current;
       const currentMetric = activeMetricRef.current;
       const currentZoom = zoomRef.current;
       const currentPan = panRef.current;
 
-      if (currentPoints && currentPoints.length >= 2) {
-        // Calculate Min / Max
-        let minVal = Infinity;
-        let maxVal = -Infinity;
-        const len = currentPoints.length;
+      // Attempt WebGPU Shader Render
+      if (webgpuRef.current && webgpuRef.current.getIsInitialized()) {
+        webgpuRef.current.render(currentPoints, currentMetric, currentZoom);
+      } else if (ctx) {
+        // Fallback HTML5 Canvas2D Render
+        ctx.fillStyle = '#0b0f19';
+        ctx.fillRect(0, 0, width, height);
 
-        for (let i = 0; i < len; i++) {
-          const v = currentPoints[i][currentMetric] as number;
-          if (v < minVal) minVal = v;
-          if (v > maxVal) maxVal = v;
-        }
-
-        if (minVal === maxVal) {
-          minVal = 0;
-          maxVal = maxVal === 0 ? 100 : maxVal * 1.2;
-        }
-
-        const padding = (maxVal - minVal) * 0.1;
-        minVal = Math.max(0, minVal - padding);
-        maxVal = maxVal + padding;
-        const range = maxVal - minVal;
-
-        const stepX = (width / (len - 1)) * currentZoom;
-        const startX = width - (len - 1) * stepX + currentPan;
-
-        // Area Fill Gradient
-        const grad = ctx.createLinearGradient(0, 0, 0, height);
-        grad.addColorStop(0, 'rgba(56, 189, 248, 0.25)');
-        grad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+        // Draw Grid Lines
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+        ctx.lineWidth = 1;
+        const rows = 6;
+        const cols = 10;
+        const rowStep = height / rows;
+        const colStep = width / cols;
 
         ctx.beginPath();
-        ctx.moveTo(startX, height);
-        for (let i = 0; i < len; i++) {
-          const x = startX + i * stepX;
-          const val = currentPoints[i][currentMetric] as number;
-          const y = height - ((val - minVal) / range) * (height - 40) - 20;
-          ctx.lineTo(x, y);
+        for (let i = 1; i < rows; i++) {
+          const y = i * rowStep;
+          ctx.moveTo(0, y);
+          ctx.lineTo(width, y);
         }
-        ctx.lineTo(startX + (len - 1) * stepX, height);
-        ctx.closePath();
-        ctx.fillStyle = grad;
-        ctx.fill();
-
-        // Glowing Line Path
-        ctx.shadowColor = '#38bdf8';
-        ctx.shadowBlur = 8;
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 2;
-
-        ctx.beginPath();
-        for (let i = 0; i < len; i++) {
-          const x = startX + i * stepX;
-          const val = currentPoints[i][currentMetric] as number;
-          const y = height - ((val - minVal) / range) * (height - 40) - 20;
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
+        for (let j = 1; j < cols; j++) {
+          const x = j * colStep;
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, height);
         }
         ctx.stroke();
-        ctx.shadowBlur = 0;
 
-        // Anomaly Pulse Markers
-        for (let i = 0; i < len; i++) {
-          const pt = currentPoints[i];
-          if (pt.isAnomaly || (pt.zScore && pt.zScore > 3.0)) {
+        if (currentPoints && currentPoints.length >= 2) {
+          let minVal = Infinity;
+          let maxVal = -Infinity;
+          const len = currentPoints.length;
+
+          for (let i = 0; i < len; i++) {
+            const v = currentPoints[i][currentMetric] as number;
+            if (v < minVal) minVal = v;
+            if (v > maxVal) maxVal = v;
+          }
+
+          if (minVal === maxVal) {
+            minVal = 0;
+            maxVal = maxVal === 0 ? 100 : maxVal * 1.2;
+          }
+
+          const padding = (maxVal - minVal) * 0.1;
+          minVal = Math.max(0, minVal - padding);
+          maxVal = maxVal + padding;
+          const range = maxVal - minVal;
+
+          const stepX = (width / (len - 1)) * currentZoom;
+          const startX = width - (len - 1) * stepX + currentPan;
+
+          // Area Fill Gradient
+          const grad = ctx.createLinearGradient(0, 0, 0, height);
+          grad.addColorStop(0, 'rgba(56, 189, 248, 0.25)');
+          grad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+
+          ctx.beginPath();
+          ctx.moveTo(startX, height);
+          for (let i = 0; i < len; i++) {
             const x = startX + i * stepX;
-            const val = pt[currentMetric] as number;
+            const val = currentPoints[i][currentMetric] as number;
             const y = height - ((val - minVal) / range) * (height - 40) - 20;
+            ctx.lineTo(x, y);
+          }
+          ctx.lineTo(startX + (len - 1) * stepX, height);
+          ctx.closePath();
+          ctx.fillStyle = grad;
+          ctx.fill();
 
-            ctx.beginPath();
-            ctx.arc(x, y, 6 + Math.sin(now * 0.01) * 2, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(239, 68, 68, 0.8)';
-            ctx.fill();
-            ctx.strokeStyle = '#f87171';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
+          // Glowing Line Path
+          ctx.shadowColor = '#38bdf8';
+          ctx.shadowBlur = 8;
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 2;
+
+          ctx.beginPath();
+          for (let i = 0; i < len; i++) {
+            const x = startX + i * stepX;
+            const val = currentPoints[i][currentMetric] as number;
+            const y = height - ((val - minVal) / range) * (height - 40) - 20;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+
+          // Anomaly Pulse Markers
+          for (let i = 0; i < len; i++) {
+            const pt = currentPoints[i];
+            if (pt.isAnomaly || (pt.zScore && pt.zScore > 3.0)) {
+              const x = startX + i * stepX;
+              const val = pt[currentMetric] as number;
+              const y = height - ((val - minVal) / range) * (height - 40) - 20;
+
+              ctx.beginPath();
+              ctx.arc(x, y, 6 + Math.sin(now * 0.01) * 2, 0, Math.PI * 2);
+              ctx.fillStyle = 'rgba(239, 68, 68, 0.8)';
+              ctx.fill();
+              ctx.strokeStyle = '#f87171';
+              ctx.lineWidth = 1.5;
+              ctx.stroke();
+            }
           }
         }
       }
@@ -204,8 +229,8 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
           <h2 style={{ fontSize: '0.95rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#ffffff' }}>
             Real-Time Streaming Visualizer
           </h2>
-          <span className="badge badge-low" style={{ fontSize: '0.68rem', marginLeft: '6px' }}>
-            HTML5 Canvas Context2D (60 FPS)
+          <span className="badge badge-low" style={{ fontSize: '0.68rem', marginLeft: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <Cpu size={12} /> {activeRenderEngine === 'WebGPU' ? 'WebGPU Hardware Shaders (144 FPS)' : 'HTML5 Canvas 2D (60 FPS)'}
           </span>
         </div>
 
@@ -262,7 +287,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
         </div>
       </div>
 
-      {/* HTML5 Canvas Element */}
+      {/* HTML5 / WebGPU Canvas Element */}
       <div style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)', background: '#0b0f19', height: '380px' }}>
         <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
       </div>
@@ -287,12 +312,12 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
           <span style={{ fontWeight: '600', color: '#38bdf8', textTransform: 'uppercase' }}>{activeMetric}</span>
         </div>
         <div>
-          <span style={{ color: 'var(--text-dim)' }}>Render Rate: </span>
-          <span style={{ fontWeight: '600', color: '#34d399' }}>{fps} FPS</span>
+          <span style={{ color: 'var(--text-dim)' }}>Engine: </span>
+          <span style={{ fontWeight: '600', color: '#34d399' }}>{activeRenderEngine} ({fps} FPS)</span>
         </div>
         <div>
-          <span style={{ color: 'var(--text-dim)' }}>Zero-Copy Transfer: </span>
-          <span style={{ fontWeight: '600', color: '#c084fc' }}>ArrayBuffer Enabled</span>
+          <span style={{ color: 'var(--text-dim)' }}>Codec: </span>
+          <span style={{ fontWeight: '600', color: '#c084fc' }}>Binary Protobuf / QUIC</span>
         </div>
       </div>
 
