@@ -1,6 +1,6 @@
 import React from 'react';
-import { Play, Pause, Flame, RefreshCw, Sliders, Zap } from 'lucide-react';
-import type { MetricType, SystemStats } from '../types/telemetry';
+import { Play, Pause, Flame, RefreshCw, Sliders, Zap, Server, Cpu } from 'lucide-react';
+import type { MetricType, SystemStats, DataSourceMode } from '../types/telemetry';
 
 interface ControlToolbarProps {
   stats: SystemStats;
@@ -11,6 +11,7 @@ interface ControlToolbarProps {
   onSetZThreshold: (thresh: number) => void;
   onTriggerBurst: () => void;
   onResetBuffer: () => void;
+  onToggleSourceMode: (mode: DataSourceMode) => void;
   currentRateHz: number;
 }
 
@@ -32,6 +33,7 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
   onSetZThreshold,
   onTriggerBurst,
   onResetBuffer,
+  onToggleSourceMode,
   currentRateHz
 }) => {
   return (
@@ -64,9 +66,49 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
           ))}
         </div>
 
-        {/* Controls & Stream Controls */}
+        {/* Data Source Selector & Stream Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
           
+          {/* Data Source Mode Toggle (Simulated vs Real WebSocket) */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(15, 23, 42, 0.6)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+            <button
+              onClick={() => onToggleSourceMode('SIMULATOR')}
+              style={{
+                padding: '4px 10px',
+                borderRadius: '6px',
+                fontSize: '0.75rem',
+                fontWeight: '600',
+                cursor: 'pointer',
+                border: 'none',
+                background: stats.sourceMode === 'SIMULATOR' ? 'rgba(56, 189, 248, 0.25)' : 'transparent',
+                color: stats.sourceMode === 'SIMULATOR' ? '#38bdf8' : 'var(--text-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <Cpu size={13} /> Simulated
+            </button>
+            <button
+              onClick={() => onToggleSourceMode('WEBSOCKET')}
+              style={{
+                padding: '4px 10px',
+                borderRadius: '6px',
+                fontSize: '0.75rem',
+                fontWeight: '600',
+                cursor: 'pointer',
+                border: 'none',
+                background: stats.sourceMode === 'WEBSOCKET' ? 'rgba(52, 211, 153, 0.25)' : 'transparent',
+                color: stats.sourceMode === 'WEBSOCKET' ? '#34d399' : 'var(--text-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <Server size={13} /> Real WebSocket
+            </button>
+          </div>
+
           {/* Stream Rate Selector */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(15, 23, 42, 0.5)', padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
             <Zap size={14} color="var(--accent-amber)" />

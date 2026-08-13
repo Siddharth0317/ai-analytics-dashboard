@@ -12,7 +12,9 @@ import type {
   MetricType,
   AnomalyEvent,
   AIInsight,
-  SystemStats
+  SystemStats,
+  DataSourceMode,
+  WSStatus
 } from './types/telemetry';
 
 export function App() {
@@ -41,12 +43,14 @@ export function App() {
     anomaliesDetected: 0,
     workerStatus: 'active',
     renderMode: 'OffscreenCanvas',
-    zThreshold: 3.0
+    zThreshold: 3.0,
+    sourceMode: 'SIMULATOR',
+    wsStatus: 'simulator'
   });
 
   // Initialize Web Workers
   useEffect(() => {
-    // 1. Spawn Telemetry Simulator Worker
+    // 1. Spawn Telemetry Simulator / WebSocket Worker
     const telWorker = new Worker(new URL('./workers/telemetryWorker.ts', import.meta.url), { type: 'module' });
     telemetryWorkerRef.current = telWorker;
 
@@ -54,7 +58,7 @@ export function App() {
     const anomWorker = new Worker(new URL('./workers/anomalyWorker.ts', import.meta.url), { type: 'module' });
     anomalyWorkerRef.current = anomWorker;
 
-    // Handle telemetry batches from Telemetry Worker
+    // Handle telemetry batches and status from Telemetry Worker
     telWorker.onmessage = (e: MessageEvent) => {
       const { type, payload } = e.data;
       if (type === 'TELEMETRY_BATCH' && Array.isArray(payload)) {
@@ -71,6 +75,9 @@ export function App() {
             payload: batch
           });
         }
+      } else if (type === 'WS_STATUS_CHANGE') {
+        const wsStat: WSStatus = payload;
+        setStats(prev => ({ ...prev, wsStatus: wsStat }));
       }
     };
 
@@ -94,11 +101,11 @@ export function App() {
     // Start stream
     telWorker.postMessage({ type: 'START_STREAM', payload: { rateHz: currentRateHz } });
 
-    // State update loop (~30fps update for UI React state to avoid main thread layout thrashing)
+    // State update loop (~30fps update for UI React state)
     const uiUpdateInterval = setInterval(() => {
       const ring = ringBufferRef.current;
       const latest = ring.getLatest();
-      const recent = ring.getRecent(120); // 120 points for chart rendering
+      const recent = ring.getRecent(120);
 
       if (latest) {
         setLatestPoint(latest);
@@ -116,7 +123,7 @@ export function App() {
           ...prev,
           ingestionRate: rate,
           totalPoints: ring.getSize(),
-          fps: Math.min(120, Math.floor(58 + Math.random() * 4)) // Smooth 60-120 FPS target indicator
+          fps: Math.min(120, Math.floor(58 + Math.random() * 4))
         }));
       }
     }, 33);
@@ -127,6 +134,17 @@ export function App() {
       anomWorker.terminate();
     };
   }, []);
+
+  // Toggle Data Source Mode (SIMULATOR vs WEBSOCKET)
+  const handleToggleSourceMode = (mode: DataSourceMode) => {
+    setStats(prev => ({ ...prev, sourceMode: mode }));
+    if (telemetryWorkerRef.current) {
+      telemetryWorkerRef.current.postMessage({
+        type: 'SET_MODE',
+        payload: { mode, wsUrl: 'ws://127.0.0.1:8080' }
+      });
+    }
+  };
 
   // Update Telemetry Stream Speed Rate
   const handleSetRate = (hz: number) => {
@@ -199,6 +217,7 @@ export function App() {
         onSetZThreshold={handleSetZThreshold}
         onTriggerBurst={handleTriggerBurst}
         onResetBuffer={handleResetBuffer}
+        onToggleSourceMode={handleToggleSourceMode}
         currentRateHz={currentRateHz}
       />
 

@@ -13,6 +13,8 @@ export interface TelemetryPoint {
 }
 
 export type MetricType = 'latency' | 'throughput' | 'cpuLoad' | 'gpuLoad' | 'errorRate' | 'modelInference';
+export type DataSourceMode = 'SIMULATOR' | 'WEBSOCKET';
+export type WSStatus = 'connected' | 'disconnected' | 'connecting' | 'simulator';
 
 export interface AnomalyEvent {
   id: string;
@@ -49,16 +51,20 @@ export interface SystemStats {
   workerStatus: 'active' | 'paused' | 'error';
   renderMode: 'OffscreenCanvas' | 'MainThread';
   zThreshold: number;
+  sourceMode: DataSourceMode;
+  wsStatus: WSStatus;
 }
 
 export type WorkerMessageType =
   | 'START_STREAM'
   | 'PAUSE_STREAM'
   | 'SET_CONFIG'
+  | 'SET_MODE'
   | 'TELEMETRY_BATCH'
   | 'ANOMALY_DETECTED'
   | 'TRIGGER_BURST'
-  | 'RESET_BUFFER';
+  | 'RESET_BUFFER'
+  | 'WS_STATUS_CHANGE';
 
 export interface WorkerMessage {
   type: WorkerMessageType;

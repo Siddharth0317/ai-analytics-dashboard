@@ -1,12 +1,17 @@
-import type { TelemetryPoint } from '../types/telemetry';
+import type { TelemetryPoint, DataSourceMode, WSStatus } from '../types/telemetry';
 
 let isRunning = false;
-let intervalMs = 2; // ~500 msg/sec (every 2ms generates a point, batched every 16ms ~60fps)
+let intervalMs = 2; // ~500 msg/sec
 let timerId: any = null;
 let currentId = 0;
-let spikeProbability = 0.02; // 2% chance of spike
+let spikeProbability = 0.02;
 
-// Smooth random walk parameters
+let sourceMode: DataSourceMode = 'SIMULATOR';
+let wsUrl = 'ws://127.0.0.1:8080';
+let socket: WebSocket | null = null;
+let reconnectTimer: any = null;
+
+// Smooth random walk parameters (for SIMULATOR mode)
 let baseLatency = 45;
 let baseThroughput = 8500;
 let baseCpu = 35;
@@ -19,7 +24,6 @@ function generatePoint(): TelemetryPoint {
   const timestamp = Date.now();
   const isSpike = Math.random() < spikeProbability;
 
-  // Random walk drift
   baseLatency += (Math.random() - 0.5) * 2;
   baseLatency = Math.max(10, Math.min(150, baseLatency));
 
@@ -42,18 +46,12 @@ function generatePoint(): TelemetryPoint {
   let errorRate = baseError + (Math.random() - 0.5) * 0.1;
   let modelInference = baseInference + (Math.random() - 0.5) * 2;
 
-  // Inject dramatic statistical anomalies (3.5σ - 5σ) when spike occurs
   if (isSpike) {
     const spikeType = Math.floor(Math.random() * 4);
-    if (spikeType === 0) {
-      latency *= 4.5 + Math.random() * 2; // Huge latency spike (e.g. 250ms+)
-    } else if (spikeType === 1) {
-      cpuLoad = Math.min(100, cpuLoad * 2.5 + 30); // CPU maxout
-    } else if (spikeType === 2) {
-      errorRate += 4.5 + Math.random() * 3; // Error rate jump (5%+)
-    } else {
-      modelInference *= 5.0; // AI model inference delay spike
-    }
+    if (spikeType === 0) latency *= 4.5;
+    else if (spikeType === 1) cpuLoad = Math.min(100, cpuLoad * 2.5 + 30);
+    else if (spikeType === 2) errorRate += 4.5;
+    else modelInference *= 5.0;
   }
 
   return {
@@ -71,22 +69,89 @@ function generatePoint(): TelemetryPoint {
 
 let batchBuffer: TelemetryPoint[] = [];
 
-function tick() {
-  if (!isRunning) return;
+function tickSimulator() {
+  if (!isRunning || sourceMode !== 'SIMULATOR') return;
 
-  // Generate 5-10 points per tick interval to simulate 500-1000 msg/sec
   const pointsPerTick = Math.max(1, Math.floor(16 / intervalMs));
   for (let i = 0; i < pointsPerTick; i++) {
     batchBuffer.push(generatePoint());
   }
 
-  // Post batch to main thread every ~16ms frame boundary
   if (batchBuffer.length > 0) {
-    self.postMessage({
-      type: 'TELEMETRY_BATCH',
-      payload: batchBuffer
-    });
+    self.postMessage({ type: 'TELEMETRY_BATCH', payload: batchBuffer });
     batchBuffer = [];
+  }
+}
+
+function notifyWsStatus(status: WSStatus) {
+  self.postMessage({ type: 'WS_STATUS_CHANGE', payload: status });
+}
+
+function connectWebSocket() {
+  if (socket) {
+    socket.close();
+    socket = null;
+  }
+
+  notifyWsStatus('connecting');
+
+  try {
+    socket = new WebSocket(wsUrl);
+
+    socket.onopen = () => {
+      notifyWsStatus('connected');
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    };
+
+    socket.onmessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'TELEMETRY_BATCH' && Array.isArray(data.payload)) {
+          self.postMessage({ type: 'TELEMETRY_BATCH', payload: data.payload });
+        }
+      } catch (err) {
+        console.error('[Worker] WS JSON parse error:', err);
+      }
+    };
+
+    socket.onerror = (err) => {
+      console.warn('[Worker] WebSocket connection error:', err);
+      notifyWsStatus('disconnected');
+    };
+
+    socket.onclose = () => {
+      notifyWsStatus('disconnected');
+      if (sourceMode === 'WEBSOCKET') {
+        reconnectTimer = setTimeout(connectWebSocket, 3000);
+      }
+    };
+  } catch (err) {
+    notifyWsStatus('disconnected');
+  }
+}
+
+function switchMode(newMode: DataSourceMode, targetWsUrl?: string) {
+  sourceMode = newMode;
+  if (targetWsUrl) wsUrl = targetWsUrl;
+
+  if (sourceMode === 'WEBSOCKET') {
+    if (timerId) {
+      clearInterval(timerId);
+      timerId = null;
+    }
+    connectWebSocket();
+  } else {
+    if (socket) {
+      socket.close();
+      socket = null;
+    }
+    notifyWsStatus('simulator');
+    if (isRunning && !timerId) {
+      timerId = setInterval(tickSimulator, 16);
+    }
   }
 }
 
@@ -99,8 +164,10 @@ self.onmessage = (e: MessageEvent) => {
       if (payload?.rateHz) {
         intervalMs = Math.max(1, Math.floor(1000 / payload.rateHz));
       }
-      if (!timerId) {
-        timerId = setInterval(tick, 16);
+      if (sourceMode === 'SIMULATOR' && !timerId) {
+        timerId = setInterval(tickSimulator, 16);
+      } else if (sourceMode === 'WEBSOCKET' && !socket) {
+        connectWebSocket();
       }
       break;
 
@@ -110,11 +177,23 @@ self.onmessage = (e: MessageEvent) => {
         clearInterval(timerId);
         timerId = null;
       }
+      if (socket) {
+        socket.close();
+        socket = null;
+      }
+      notifyWsStatus('disconnected');
+      break;
+
+    case 'SET_MODE':
+      switchMode(payload.mode, payload.wsUrl);
       break;
 
     case 'SET_CONFIG':
       if (payload?.rateHz) {
         intervalMs = Math.max(1, Math.floor(1000 / payload.rateHz));
+        if (sourceMode === 'WEBSOCKET' && socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'SET_RATE', rateHz: payload.rateHz }));
+        }
       }
       if (payload?.spikeProb !== undefined) {
         spikeProbability = payload.spikeProb;
@@ -122,19 +201,19 @@ self.onmessage = (e: MessageEvent) => {
       break;
 
     case 'TRIGGER_BURST':
-      // Force immediate burst of 100 anomaly points
-      const burstPoints: TelemetryPoint[] = [];
-      for (let i = 0; i < 50; i++) {
-        const pt = generatePoint();
-        pt.latency *= 5.0;
-        pt.cpuLoad = 99.5;
-        pt.errorRate = 8.2;
-        burstPoints.push(pt);
+      if (sourceMode === 'WEBSOCKET' && socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'TRIGGER_BURST' }));
+      } else {
+        const burstPoints: TelemetryPoint[] = [];
+        for (let i = 0; i < 50; i++) {
+          const pt = generatePoint();
+          pt.latency *= 5.0;
+          pt.cpuLoad = 99.5;
+          pt.errorRate = 8.2;
+          burstPoints.push(pt);
+        }
+        self.postMessage({ type: 'TELEMETRY_BATCH', payload: burstPoints });
       }
-      self.postMessage({
-        type: 'TELEMETRY_BATCH',
-        payload: burstPoints
-      });
       break;
   }
 };
