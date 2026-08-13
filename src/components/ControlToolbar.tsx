@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Pause, Flame, RefreshCw, Sliders, Zap, Server, Cpu } from 'lucide-react';
+import { Play, Pause, Flame, RefreshCw, Sliders, Zap, Server, Cpu, FileText } from 'lucide-react';
 import type { MetricType, SystemStats, DataSourceMode } from '../types/telemetry';
 
 interface ControlToolbarProps {
@@ -12,6 +12,7 @@ interface ControlToolbarProps {
   onTriggerBurst: () => void;
   onResetBuffer: () => void;
   onToggleSourceMode: (mode: DataSourceMode) => void;
+  onOpenReport: () => void;
   currentRateHz: number;
 }
 
@@ -34,6 +35,7 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
   onTriggerBurst,
   onResetBuffer,
   onToggleSourceMode,
+  onOpenReport,
   currentRateHz
 }) => {
   return (
@@ -69,7 +71,7 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
         {/* Data Source Selector & Stream Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
           
-          {/* Data Source Mode Toggle (Simulated vs Real WebSocket) */}
+          {/* Data Source Mode Toggle */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(15, 23, 42, 0.6)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
             <button
               onClick={() => onToggleSourceMode('SIMULATOR')}
@@ -151,6 +153,26 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
             </span>
           </div>
 
+          {/* Generate Report Button */}
+          <button
+            onClick={onOpenReport}
+            style={{
+              padding: '6px 12px',
+              borderRadius: '6px',
+              fontSize: '0.78rem',
+              fontWeight: '600',
+              cursor: 'pointer',
+              border: '1px solid var(--accent-purple)',
+              background: 'rgba(192, 132, 252, 0.15)',
+              color: '#c084fc',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <FileText size={14} /> Generate Report
+          </button>
+
           {/* Burst Test Trigger */}
           <button
             onClick={onTriggerBurst}
@@ -168,7 +190,7 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
               gap: '6px'
             }}
           >
-            <Flame size={14} /> Inject Anomaly Burst
+            <Flame size={14} /> Inject Burst
           </button>
 
           {/* Pause / Play Button */}
@@ -190,11 +212,11 @@ export const ControlToolbar: React.FC<ControlToolbarProps> = ({
           >
             {stats.workerStatus === 'active' ? (
               <>
-                <Pause size={14} color="#38bdf8" /> Pause Stream
+                <Pause size={14} color="#38bdf8" /> Pause
               </>
             ) : (
               <>
-                <Play size={14} color="#34d399" /> Resume Stream
+                <Play size={14} color="#34d399" /> Resume
               </>
             )}
           </button>

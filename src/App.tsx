@@ -5,6 +5,7 @@ import { MetricsOverviewCards } from './components/MetricsOverviewCards';
 import { CanvasVisualizer } from './components/CanvasVisualizer';
 import { AIInsightPanel } from './components/AIInsightPanel';
 import { QueryConsole } from './components/QueryConsole';
+import { ReportGeneratorModal } from './components/ReportGeneratorModal';
 import { HighPerfRingBuffer } from './utils/ringBuffer';
 import { AIInsightEngine } from './services/aiInsightEngine';
 import type {
@@ -31,6 +32,7 @@ export function App() {
   const [latestPoint, setLatestPoint] = useState<TelemetryPoint | null>(null);
   const [recentHistory, setRecentHistory] = useState<TelemetryPoint[]>([]);
   const [insights, setInsights] = useState<AIInsight[]>([]);
+  const [isReportOpen, setIsReportOpen] = useState<boolean>(false);
 
   // Telemetry Ingestion Stats Counter
   const msgCounterRef = useRef<number>(0);
@@ -218,6 +220,7 @@ export function App() {
         onTriggerBurst={handleTriggerBurst}
         onResetBuffer={handleResetBuffer}
         onToggleSourceMode={handleToggleSourceMode}
+        onOpenReport={() => setIsReportOpen(true)}
         currentRateHz={currentRateHz}
       />
 
@@ -253,6 +256,15 @@ export function App() {
 
       {/* 5. Client-Side DuckDB Query Console */}
       <QueryConsole telemetryPoints={recentHistory} />
+
+      {/* 6. Executive Report Generator Modal */}
+      <ReportGeneratorModal
+        isOpen={isReportOpen}
+        onClose={() => setIsReportOpen(false)}
+        history={recentHistory}
+        insights={insights}
+        stats={stats}
+      />
 
     </div>
   );
