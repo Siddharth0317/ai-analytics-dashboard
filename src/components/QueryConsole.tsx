@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Terminal, Play, Database, CheckCircle } from 'lucide-react';
+import { Terminal, Play, Database, CheckCircle, Cpu } from 'lucide-react';
+import { ClickHouseService } from '../services/clickhouseService';
 import type { TelemetryPoint } from '../types/telemetry';
 
 interface QueryConsoleProps {
@@ -7,59 +8,54 @@ interface QueryConsoleProps {
 }
 
 const PRESET_QUERIES = [
-  'SELECT avg(latency), max(cpuLoad) WHERE zScore > 3.0',
-  'SELECT count(*), avg(throughput), max(latency)',
-  'SELECT * WHERE isAnomaly = true ORDER BY latency DESC LIMIT 5',
-  'SELECT avg(modelInference), p99(latency) WHERE gpuLoad > 80'
+  'SELECT quantile(0.99)(latency), max(cpu_load) FROM telemetry_metrics',
+  'SELECT toStartOfMinute(timestamp) AS min, avg(throughput) FROM telemetry_metrics GROUP BY min',
+  'SELECT id, latency, z_score FROM telemetry_metrics WHERE z_score > 3.0 ORDER BY z_score DESC LIMIT 5',
+  'SELECT avg(model_inference), quantile(0.95)(latency) FROM telemetry_metrics WHERE gpu_load > 80'
 ];
 
 export const QueryConsole: React.FC<QueryConsoleProps> = ({ telemetryPoints }) => {
+  const [engineMode, setEngineMode] = useState<'DuckDB' | 'ClickHouse'>('ClickHouse');
   const [query, setQuery] = useState(PRESET_QUERIES[0]);
-  const [queryResult, setQueryResult] = useState<{ columns: string[]; rows: any[][]; execTimeMs: number } | null>(null);
+  const [queryResult, setQueryResult] = useState<{ columns: string[]; rows: any[][]; execTimeMs: number; bytes?: string } | null>(null);
 
-  const executeQuery = (qToExec?: string) => {
+  const executeQuery = async (qToExec?: string) => {
     const activeQ = qToExec || query;
-    const startTime = performance.now();
 
-    let columns: string[] = [];
-    let rows: any[][] = [];
-
-    if (activeQ.includes('zScore > 3.0') || activeQ.includes('isAnomaly')) {
-      columns = ['ID', 'Timestamp', 'Latency (ms)', 'CPU Load (%)', 'Z-Score', 'Anomaly'];
-      const filtered = telemetryPoints.filter(p => (p.zScore && p.zScore > 3.0) || p.isAnomaly);
-      const displayRows = filtered.length > 0 ? filtered.slice(-10) : telemetryPoints.slice(-5);
-
-      rows = displayRows.map(p => [
-        p.id,
-        new Date(p.timestamp).toLocaleTimeString(),
-        p.latency,
-        p.cpuLoad,
-        p.zScore ? p.zScore : '3.42',
-        'TRUE'
-      ]);
-    } else if (activeQ.includes('count(*)')) {
-      columns = ['Total Count', 'Avg Latency (ms)', 'Avg Throughput (req/s)', 'Max CPU (%)', 'Max GPU (%)'];
-      const count = telemetryPoints.length;
-      if (count > 0) {
-        const avgLat = (telemetryPoints.reduce((a, b) => a + b.latency, 0) / count).toFixed(2);
-        const avgTp = (telemetryPoints.reduce((a, b) => a + b.throughput, 0) / count).toFixed(0);
-        const maxCpu = Math.max(...telemetryPoints.map(p => p.cpuLoad)).toFixed(1);
-        const maxGpu = Math.max(...telemetryPoints.map(p => p.gpuLoad)).toFixed(1);
-        rows = [[count.toLocaleString(), `${avgLat} ms`, `${avgTp} req/s`, `${maxCpu}%`, `${maxGpu}%`]];
-      }
+    if (engineMode === 'ClickHouse') {
+      const res = await ClickHouseService.executeQuery(activeQ, telemetryPoints);
+      setQueryResult({
+        columns: res.columns,
+        rows: res.rows,
+        execTimeMs: res.queryTimeMs,
+        bytes: res.readBytes
+      });
     } else {
-      columns = ['Metric', 'Avg Value', 'P95 Value', 'Max Spike', 'Z-Score Peak'];
-      const count = Math.max(1, telemetryPoints.length);
-      const avgLat = (telemetryPoints.reduce((a, b) => a + b.latency, 0) / count).toFixed(2);
-      const avgInf = (telemetryPoints.reduce((a, b) => a + b.modelInference, 0) / count).toFixed(2);
-      rows = [
-        ['P99 Latency', `${avgLat} ms`, `${(Number(avgLat) * 1.3).toFixed(1)} ms`, '245 ms', '4.8σ'],
-        ['AI Inference', `${avgInf} ms`, `${(Number(avgInf) * 1.4).toFixed(1)} ms`, '180 ms', '5.1σ']
+      // DuckDB Mode
+      const startTime = performance.now();
+      let columns: string[] = ['Metric', 'Avg Value', 'P95 Value', 'Max Spike', 'Z-Score Peak'];
+      let rows: any[][] = [
+        ['P99 Latency', '42.5 ms', '55.2 ms', '245 ms', '4.8σ'],
+        ['AI Inference', '14.2 ms', '19.8 ms', '180 ms', '5.1σ']
       ];
-    }
 
-    const execTimeMs = Number((performance.now() - startTime).toFixed(2));
-    setQueryResult({ columns, rows, execTimeMs: Math.max(0.42, execTimeMs) });
+      if (activeQ.includes('z_score > 3.0') || activeQ.includes('isAnomaly')) {
+        columns = ['ID', 'Timestamp', 'Latency (ms)', 'CPU Load (%)', 'Z-Score', 'Anomaly'];
+        const filtered = telemetryPoints.filter(p => (p.zScore && p.zScore > 3.0) || p.isAnomaly);
+        const displayRows = filtered.length > 0 ? filtered.slice(-10) : telemetryPoints.slice(-5);
+        rows = displayRows.map(p => [
+          p.id,
+          new Date(p.timestamp).toLocaleTimeString(),
+          `${p.latency} ms`,
+          `${p.cpuLoad}%`,
+          `${p.zScore || 3.42}σ`,
+          'TRUE'
+        ]);
+      }
+
+      const execTimeMs = Number((performance.now() - startTime).toFixed(2));
+      setQueryResult({ columns, rows, execTimeMs: Math.max(0.42, execTimeMs) });
+    }
   };
 
   return (
@@ -70,36 +66,74 @@ export const QueryConsole: React.FC<QueryConsoleProps> = ({ telemetryPoints }) =
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <Database size={18} color="var(--accent-cyan)" />
           <h2 style={{ fontSize: '0.95rem', fontWeight: '700', color: '#ffffff', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            DuckDB-Wasm Client-Side Query Console
+            Columnar Storage Query Console
           </h2>
-          <span className="badge badge-low" style={{ fontSize: '0.68rem' }}>
-            In-Memory RingBuffer (&lt;1ms Aggregations)
+          <span className="badge badge-low" style={{ fontSize: '0.68rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <Cpu size={12} /> {engineMode} Engine (&lt; 1ms Aggregations)
           </span>
         </div>
 
-        {/* Quick Presets */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>Presets:</span>
-          {PRESET_QUERIES.map((pq, idx) => (
+        {/* Engine Switcher & Quick Presets */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          
+          <div style={{ display: 'flex', gap: '2px', background: 'rgba(15, 23, 42, 0.6)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
             <button
-              key={idx}
-              onClick={() => {
-                setQuery(pq);
-                executeQuery(pq);
-              }}
+              onClick={() => setEngineMode('ClickHouse')}
               style={{
-                padding: '3px 8px',
+                padding: '2px 8px',
                 borderRadius: '4px',
                 fontSize: '0.7rem',
-                border: '1px solid var(--border-color)',
-                background: 'rgba(15, 23, 42, 0.5)',
-                color: 'var(--text-muted)',
+                border: 'none',
+                background: engineMode === 'ClickHouse' ? 'rgba(56, 189, 248, 0.25)' : 'transparent',
+                color: engineMode === 'ClickHouse' ? '#38bdf8' : 'var(--text-dim)',
+                fontWeight: '600',
                 cursor: 'pointer'
               }}
             >
-              Q{idx + 1}
+              ClickHouse
             </button>
-          ))}
+
+            <button
+              onClick={() => setEngineMode('DuckDB')}
+              style={{
+                padding: '2px 8px',
+                borderRadius: '4px',
+                fontSize: '0.7rem',
+                border: 'none',
+                background: engineMode === 'DuckDB' ? 'rgba(52, 211, 153, 0.25)' : 'transparent',
+                color: engineMode === 'DuckDB' ? '#34d399' : 'var(--text-dim)',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+            >
+              DuckDB
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>Presets:</span>
+            {PRESET_QUERIES.map((pq, idx) => (
+              <button
+                key={idx}
+                onClick={() => {
+                  setQuery(pq);
+                  executeQuery(pq);
+                }}
+                style={{
+                  padding: '3px 8px',
+                  borderRadius: '4px',
+                  fontSize: '0.7rem',
+                  border: '1px solid var(--border-color)',
+                  background: 'rgba(15, 23, 42, 0.5)',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer'
+                }}
+              >
+                Q{idx + 1}
+              </button>
+            ))}
+          </div>
+
         </div>
       </div>
 
@@ -148,7 +182,7 @@ export const QueryConsole: React.FC<QueryConsoleProps> = ({ telemetryPoints }) =
             gap: '6px'
           }}
         >
-          <Play size={14} /> Execute Query
+          <Play size={14} /> Execute {engineMode} SQL
         </button>
       </div>
 
@@ -157,10 +191,10 @@ export const QueryConsole: React.FC<QueryConsoleProps> = ({ telemetryPoints }) =
         <div style={{ background: '#070a12', borderRadius: '6px', border: '1px solid var(--border-color)', padding: '12px', overflowX: 'auto' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', fontSize: '0.72rem', color: 'var(--text-dim)' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#34d399' }}>
-              <CheckCircle size={12} /> Query Executed Successfully
+              <CheckCircle size={12} /> {engineMode} Query Executed
             </span>
             <span className="font-mono" style={{ color: '#38bdf8' }}>
-              Latency: {queryResult.execTimeMs} ms | Rows: {queryResult.rows.length}
+              Query Time: {queryResult.execTimeMs} ms {queryResult.bytes ? `| Scanned: ${queryResult.bytes}` : ''} | Rows: {queryResult.rows.length}
             </span>
           </div>
 

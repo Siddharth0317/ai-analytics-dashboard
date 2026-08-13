@@ -3,11 +3,15 @@ import { Header } from './components/Header';
 import { ControlToolbar } from './components/ControlToolbar';
 import { MetricsOverviewCards } from './components/MetricsOverviewCards';
 import { CanvasVisualizer } from './components/CanvasVisualizer';
+import { MicroserviceTopology3D } from './components/MicroserviceTopology3D';
 import { AIInsightPanel } from './components/AIInsightPanel';
 import { QueryConsole } from './components/QueryConsole';
 import { ReportGeneratorModal } from './components/ReportGeneratorModal';
+import { WebhookConfigModal } from './components/WebhookConfigModal';
 import { HighPerfRingBuffer } from './utils/ringBuffer';
 import { AIInsightEngine } from './services/aiInsightEngine';
+import { ClickHouseService } from './services/clickhouseService';
+import { AlertWebhookService } from './services/alertWebhookService';
 import type {
   TelemetryPoint,
   MetricType,
@@ -32,7 +36,10 @@ export function App() {
   const [latestPoint, setLatestPoint] = useState<TelemetryPoint | null>(null);
   const [recentHistory, setRecentHistory] = useState<TelemetryPoint[]>([]);
   const [insights, setInsights] = useState<AIInsight[]>([]);
+  const [viewMode, setViewMode] = useState<'2D' | '3D'>('2D');
+
   const [isReportOpen, setIsReportOpen] = useState<boolean>(false);
+  const [isWebhooksOpen, setIsWebhooksOpen] = useState<boolean>(false);
 
   // Telemetry Ingestion Stats Counter
   const msgCounterRef = useRef<number>(0);
@@ -70,6 +77,9 @@ export function App() {
         ringBufferRef.current.pushBatch(batch);
         msgCounterRef.current += batch.length;
 
+        // Bulk insert into ClickHouse Columnar Service
+        ClickHouseService.bulkInsert(batch);
+
         // Forward batch to Anomaly Worker for statistical scanning
         if (anomalyWorkerRef.current) {
           anomalyWorkerRef.current.postMessage({
@@ -91,7 +101,10 @@ export function App() {
 
         // Generate AI Insight narrative card
         const insight = AIInsightEngine.generateInsight(anomaly);
-        setInsights(prev => [insight, ...prev.slice(0, 19)]); // Keep last 20 insights
+        setInsights(prev => [insight, ...prev.slice(0, 19)]);
+
+        // Dispatch automated Slack & PagerDuty webhook alerts
+        AlertWebhookService.dispatchAll(insight);
 
         setStats(prev => ({
           ...prev,
@@ -137,7 +150,7 @@ export function App() {
     };
   }, []);
 
-  // Toggle Data Source Mode (SIMULATOR vs WEBSOCKET)
+  // Toggle Data Source Mode (SIMULATOR vs WEBSOCKET vs WEBTRANSPORT)
   const handleToggleSourceMode = (mode: DataSourceMode) => {
     setStats(prev => ({ ...prev, sourceMode: mode }));
     if (telemetryWorkerRef.current) {
@@ -221,6 +234,7 @@ export function App() {
         onResetBuffer={handleResetBuffer}
         onToggleSourceMode={handleToggleSourceMode}
         onOpenReport={() => setIsReportOpen(true)}
+        onOpenWebhooks={() => setIsWebhooksOpen(true)}
         currentRateHz={currentRateHz}
       />
 
@@ -232,16 +246,61 @@ export function App() {
         onSelectMetric={setActiveMetric}
       />
 
+      {/* View Mode Toggle Bar (2D Stream vs 3D Cluster Topology) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+        <span style={{ fontSize: '0.78rem', fontWeight: '700', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
+          Visualization View:
+        </span>
+        <button
+          onClick={() => setViewMode('2D')}
+          style={{
+            padding: '5px 12px',
+            borderRadius: '6px',
+            fontSize: '0.78rem',
+            fontWeight: '600',
+            cursor: 'pointer',
+            border: viewMode === '2D' ? '1px solid var(--accent-cyan)' : '1px solid var(--border-color)',
+            background: viewMode === '2D' ? 'rgba(56, 189, 248, 0.2)' : 'rgba(15, 23, 42, 0.5)',
+            color: viewMode === '2D' ? '#38bdf8' : 'var(--text-muted)'
+          }}
+        >
+          📈 2D Stream Chart
+        </button>
+
+        <button
+          onClick={() => setViewMode('3D')}
+          style={{
+            padding: '5px 12px',
+            borderRadius: '6px',
+            fontSize: '0.78rem',
+            fontWeight: '600',
+            cursor: 'pointer',
+            border: viewMode === '3D' ? '1px solid var(--accent-purple)' : '1px solid var(--border-color)',
+            background: viewMode === '3D' ? 'rgba(192, 132, 252, 0.2)' : 'rgba(15, 23, 42, 0.5)',
+            color: viewMode === '3D' ? '#c084fc' : 'var(--text-muted)'
+          }}
+        >
+          🌐 3D Microservice Cluster Topology
+        </button>
+      </div>
+
       {/* 4. Main Content Grid: Visualizer & AI Insight Panel */}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 440px', gap: '20px', alignItems: 'start' }}>
         
-        {/* Left Column: Canvas Visualizer */}
+        {/* Left Column: 2D Stream Visualizer OR 3D Cluster Topology */}
         <div>
-          <CanvasVisualizer
-            dataPoints={recentHistory}
-            activeMetric={activeMetric}
-            renderMode={stats.renderMode}
-          />
+          {viewMode === '2D' ? (
+            <CanvasVisualizer
+              dataPoints={recentHistory}
+              activeMetric={activeMetric}
+              renderMode={stats.renderMode}
+            />
+          ) : (
+            <MicroserviceTopology3D
+              latestPoint={latestPoint}
+              insights={insights}
+            />
+          )}
         </div>
 
         {/* Right Column: AI Anomaly & Insight Engine */}
@@ -254,7 +313,7 @@ export function App() {
 
       </div>
 
-      {/* 5. Client-Side DuckDB Query Console */}
+      {/* 5. Client-Side Columnar Query Console (ClickHouse & DuckDB) */}
       <QueryConsole telemetryPoints={recentHistory} />
 
       {/* 6. Executive Report Generator Modal */}
@@ -264,6 +323,12 @@ export function App() {
         history={recentHistory}
         insights={insights}
         stats={stats}
+      />
+
+      {/* 7. Slack & PagerDuty Webhook Alerts Modal */}
+      <WebhookConfigModal
+        isOpen={isWebhooksOpen}
+        onClose={() => setIsWebhooksOpen(false)}
       />
 
     </div>
